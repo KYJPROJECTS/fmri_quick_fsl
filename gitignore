@@ -1,0 +1,26 @@
+# Datos de pacientes y salidas generadas - NUNCA deben subirse al repo
+funcionales/
+*.feat/
+_fsf_generated/
+*.dcm
+*.nii
+*.nii.gz
+*.json
+
+# FreeSurfer / licencias
+license.txt
+
+# Entornos y cachés Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Editor / SO
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
