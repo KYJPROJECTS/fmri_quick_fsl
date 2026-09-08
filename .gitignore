@@ -1,3 +1,7 @@
+# Configuración local - contiene rutas específicas de tu máquina
+# (pipeline.config.example.ini SÍ se versiona, este no)
+pipeline.config.ini
+
 # Datos de pacientes y salidas generadas - NUNCA deben subirse al repo
 funcionales/
 *.feat/
@@ -6,6 +10,9 @@ _fsf_generated/
 *.nii
 *.nii.gz
 *.json
+
+# Diseños FSL reales - cada quien los coloca localmente en templates/
+templates/*.fsf
 
 # FreeSurfer / licencias
 license.txt
