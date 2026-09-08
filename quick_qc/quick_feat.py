@@ -8,11 +8,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-MOTION_THRESHOLD_MM = 1.5
+# Bootstrap para poder importar common/ estando en una subcarpeta del repo.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.config import load_config
+
+try:
+    import nibabel as nib
+except ImportError:
+    nib = None  # La validación de npts se salta con un aviso si falta nibabel.
+
+CFG = load_config()
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_FUNCIONALES_DIR = "/mnt/c/Users/karen/Desktop/funcionales"
-DEFAULT_TEMPLATES_DIR = SCRIPT_DIR / "templates"
+MOTION_THRESHOLD_MM = CFG.motion_threshold_mm
 
 TASK_INCLUDE_PATTERN = re.compile(r"bold", re.IGNORECASE)
 TASK_EXCLUDE_PATTERN = re.compile(r"field_mapping|fieldmap|t1_se_tra|t1w", re.IGNORECASE)
@@ -200,9 +208,59 @@ def review_template_assignments(task_niftis: list[Path], templates_dir: Path) ->
 # Paso 5: construir .fsf y lanzar FEAT (sin bloquear al lanzarlo)
 # --------------------------------------------------------------------------
 
+def get_real_volume_count(nifti_path: Path) -> int | None:
+    """Número real de volúmenes (4ta dimensión) del NIfTI. Devuelve None si
+    nibabel no está instalado o el archivo no se puede leer, en vez de
+    fallar el pipeline por esto."""
+    if nib is None:
+        return None
+    try:
+        img = nib.load(str(nifti_path))
+        shape = img.shape
+        return shape[3] if len(shape) >= 4 else 1
+    except Exception as e:
+        print(f"[AVISO] No se pudo leer {nifti_path.name} con nibabel: {e}")
+        return None
+
+
+def validate_npts(template_text: str, nifti_path: Path) -> None:
+    """Compara fmri(npts) del template contra el número real de volúmenes
+    del NIfTI. El nombre del archivo (ej. '150x30.fsf') NO garantiza que el
+    valor interno sea correcto, así que esto se verifica de verdad en vez
+    de confiar en el nombre."""
+    match = re.search(r'set fmri\(npts\)\s+(\d+)', template_text)
+    if not match:
+        print(f"[AVISO] No se encontró 'fmri(npts)' en el template. No se "
+              f"pudo validar contra {nifti_path.name}.")
+        return
+
+    npts_template = int(match.group(1))
+    npts_real = get_real_volume_count(nifti_path)
+
+    if npts_real is None:
+        print(f"[AVISO] No se pudo determinar el número real de volúmenes "
+              f"de {nifti_path.name} (¿nibabel instalado?). Template dice "
+              f"npts={npts_template}, sin verificar.")
+        return
+
+    if npts_template != npts_real:
+        print(f"[ALERTA] Desajuste de volúmenes para {nifti_path.name}: "
+              f"el template dice fmri(npts)={npts_template}, pero el NIfTI "
+              f"real tiene {npts_real} volúmenes.")
+        if not ask_yes_no("¿Continuar de todas formas con este template?"):
+            sys.exit(f"[DETENIDO] Corrige el template o verifica "
+                      f"{nifti_path.name} antes de continuar.")
+    else:
+        print(f"[OK] npts del template ({npts_template}) coincide con "
+              f"{nifti_path.name} ({npts_real} volúmenes).")
+
+
 def build_fsf(template_path: Path, input_4d: Path, output_feat_base: Path, fsf_work_dir: Path) -> Path:
-    """Copia el template y sustituye SOLO fmri(outputdir) y feat_files(1)."""
+    """Copia el template y sustituye SOLO fmri(outputdir) y feat_files(1),
+    validando antes que fmri(npts) coincida con el NIfTI real."""
     text = template_path.read_text(encoding="utf-8")
+
+    validate_npts(text, input_4d)
 
     text, n_out = re.subn(
         r'set fmri\(outputdir\)\s+".*?"',
@@ -267,8 +325,19 @@ def wait_for_all_feat(tasks: list[FeatTask], poll_interval: int = 5, timeout_sec
                     elapsed = int(time.time() - t.start_time)
                     print(f"  [OK] {t.task_label} completado en ~{elapsed}s")
                     print_console_qc(t.feat_dir, t.task_label)
+                    open_report(report_marker)
 
         time.sleep(poll_interval)
+
+
+def open_report(report_html: Path) -> None:
+    """Abre el reporte de FEAT en el navegador de Windows vía wslview.
+    No bloquea el pipeline si wslview no está disponible."""
+    try:
+        subprocess.Popen(["wslview", str(report_html)])
+    except FileNotFoundError:
+        print(f"[AVISO] 'wslview' no está disponible. Abre manualmente:\n"
+              f"  {report_html}")
 
 
 # --------------------------------------------------------------------------
@@ -301,9 +370,9 @@ def print_console_qc(feat_dir: Path, task_label: str) -> None:
 def main():
     parser = argparse.ArgumentParser(description="FSL feat rápido fMRI por paciente (verificar activaciones)")
     parser.add_argument("--patient", required=True, help='Nombre de carpeta del paciente, ej. "ArangoValenciaKarenNicolle"')
-    parser.add_argument("--base-dir", default=str(DEFAULT_FUNCIONALES_DIR), help="Carpeta 'funcionales' donde viven los pacientes")
-    parser.add_argument("--subj", default="01", help="ID de sujeto BIDS (default 01)")
-    parser.add_argument("--templates-dir", default=str(DEFAULT_TEMPLATES_DIR), help=f"Carpeta con los .fsf")
+    parser.add_argument("--base-dir", default=str(CFG.funcionales_dir), help="Carpeta 'funcionales' donde viven los pacientes")
+    parser.add_argument("--subj", default=CFG.subject_id, help=f"ID de sujeto BIDS (default {CFG.subject_id})")
+    parser.add_argument("--templates-dir", default=str(CFG.templates_dir), help="Carpeta con los .fsf")
     parser.add_argument("--poll-interval", type=int, default=5, help="Segundos entre chequeos de DICOM/FEAT")
     parser.add_argument("--stable-checks", type=int, default=2, help="Chequeos consecutivos sin cambio para dar por completa la recepción DICOM")
     args = parser.parse_args()
