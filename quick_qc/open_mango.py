@@ -5,8 +5,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-DEFAULT_FUNCIONALES_DIR = "/mnt/c/Users/karen/Desktop/funcionales"
-DEFAULT_MANGO_EXE = "/mnt/c/Program Files/Mango/Mango.exe"
+# Bootstrap para poder importar common/ estando en una subcarpeta del repo.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common.config import load_config
+
+CFG = load_config()
 
 # Patrón para capturar el rango "min ... max" que aparece junto a la etiqueta
 THRESHOLD_RANGE_PATTERN = re.compile(
@@ -92,9 +95,9 @@ def open_in_mango(example_func: Path, thresh_zstat: Path, mango_exe: str) -> Non
 def main():
     parser = argparse.ArgumentParser(description="Abre en Mango el functional + máscara de activación de cada tarea de un paciente")
     parser.add_argument("--patient", required=True, help='Nombre de carpeta del paciente, ej. "ArangoValenciaKarenNicolle"')
-    parser.add_argument("--base-dir", default=DEFAULT_FUNCIONALES_DIR, help="Carpeta 'funcionales' donde viven los pacientes")
-    parser.add_argument("--subj", default="01", help="ID de sujeto (no usado directamente, solo informativo)")
-    parser.add_argument("--mango-exe", default=DEFAULT_MANGO_EXE, help=f"Ruta al ejecutable de Mango en Windows (default: {DEFAULT_MANGO_EXE})")
+    parser.add_argument("--base-dir", default=str(CFG.funcionales_dir), help="Carpeta 'funcionales' donde viven los pacientes")
+    parser.add_argument("--subj", default=CFG.subject_id, help="ID de sujeto (no usado directamente, solo informativo)")
+    parser.add_argument("--mango-exe", default=CFG.mango_exe, help=f"Ruta al ejecutable de Mango en Windows (default: {CFG.mango_exe})")
     args = parser.parse_args()
 
     base_dir = Path(args.base_dir).resolve()
